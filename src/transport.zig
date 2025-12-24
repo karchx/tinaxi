@@ -5,10 +5,12 @@
 // This module provides TCP transport functionality using sockets, epoll, and threads.
 
 const std = @import("std");
+const kv = @import("kv.zig");
+const Allocator = std.mem.Allocator;
 const net = std.net;
 const posix = std.posix;
 
-pub fn initServer() !void {
+pub fn initServer(allocator: Allocator) !void {
     const address = try std.net.Address.parseIp4("127.0.0.1", 9999);
 
     const tpe: u32 = posix.SOCK.STREAM;
@@ -21,6 +23,11 @@ pub fn initServer() !void {
     try posix.bind(listener, &address.any, address.getOsSockLen());
     try posix.listen(listener, 128);
 
+    var store = kv.Kv.init(allocator);
+    defer store.deinit();
+
+    var buf: [128]u8 = undefined;
+
     while (true) {
         var client_address: net.Address = undefined;
         var client_address_len: posix.socklen_t = @sizeOf(net.Address);
@@ -31,8 +38,18 @@ pub fn initServer() !void {
         };
 
         defer posix.close(socket);
-        std.debug.print("Accepted connection from {f}\n", .{client_address});
-        write(socket, "Hello from server!\n") catch |err| {
+        std.debug.print("connected {f}\n", .{client_address});
+
+        const read = posix.read(socket, &buf) catch |err| {
+            std.debug.print("Read failed: {any}\n", .{err});
+            continue;
+        };
+
+        if (read == 0) {
+            continue;
+        }
+
+        write(socket, buf[0..read]) catch |err| {
             std.debug.print("Write failed: {any}\n", .{err});
         };
     }

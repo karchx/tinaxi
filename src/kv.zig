@@ -30,6 +30,10 @@ pub const Kv = struct {
         );
 
     }
+
+    pub fn get(self: *Kv, key: []const u8) ?[]const u8 {
+        return self.store.get(key);
+    }
 };
 
 
@@ -39,6 +43,14 @@ test "create a new kv store" {
     try std.testing.expect(kv.store.count() == 0);
 }
 
-test "puts value" {
-    try std.testing.expect(true);
+test "puts and get value" {
+    const allocator = std.testing.allocator;
+    var kv = Kv.init(allocator);
+    defer kv.deinit();
+
+    try kv.put("key1", "value1");
+    try std.testing.expect(kv.store.count() == 1);
+
+    const value = kv.get("key1");
+    try std.testing.expect(std.mem.eql(u8, value orelse unreachable, "value1"));
 }
