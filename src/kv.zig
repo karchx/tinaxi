@@ -34,6 +34,14 @@ pub const Kv = struct {
     pub fn get(self: *Kv, key: []const u8) ?[]const u8 {
         return self.store.get(key);
     }
+
+    pub fn del(self: *Kv, key: []const u8) bool {
+        if(self.store.fetchOrderedRemove(key)) |entry| {
+            self.allocator.free(entry.value);
+            return true;
+        }
+        return false;
+    }
 };
 
 

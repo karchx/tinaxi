@@ -6,7 +6,7 @@ run:
 .PHONY: send
 
 send:
-	@echo "hello 2" >&3
+	@echo 'P' >&3
 
 .PHONY: receive
 	read response <&3

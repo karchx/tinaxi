@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const kv = @import("kv.zig");
+const command = @import("command.zig");
 const Allocator = std.mem.Allocator;
 const net = std.net;
 const posix = std.posix;
@@ -48,21 +49,41 @@ pub fn initServer(allocator: Allocator) !void {
         if (read == 0) {
             continue;
         }
-
-        write(socket, buf[0..read]) catch |err| {
+        const line = buf[0..read];
+        write(socket, line, &store) catch |err| {
             std.debug.print("Write failed: {any}\n", .{err});
         };
     }
 }
 
 
-fn write(socket: posix.socket_t, msg: []const u8) !void {
-    var pos: usize = 0;
-    while (pos < msg.len) {
-        const written = try posix.write(socket, msg[pos..]);
-        if (written == 0) {
-            return error.Closed;
-        }
-        pos += written;
-   }
+fn write(socket: posix.socket_t, msg: []const u8, store: *kv.Kv) !void {
+    const cmd = try command.parseCommand(msg);
+    switch (cmd) {
+        .Put => |put_cmd| {
+            try store.put(put_cmd.key, put_cmd.value);
+            const resp = command.Response{ .Ok = {} };
+            try command.writeCommand(posix.write, socket, resp);
+        },
+         .Get => |get_cmd| {
+             const value = store.get(get_cmd.key) orelse null;
+             if (value) |v| {
+                 const resp = command.Response{ .Value = v };
+                 try command.writeCommand(posix.write, socket, resp);
+             } else {
+                 const resp = command.Response{ .NotFound = {} };
+                 try command.writeCommand(posix.write, socket, resp);
+             }
+         },
+        .Del => |del_cmd| {
+            const existed = store.del(del_cmd.key);
+            if (existed) {
+                const resp = command.Response{ .Ok = {} };
+                 try command.writeCommand(posix.write, socket, resp);
+            } else {
+                const resp = command.Response{ .NotFound = {} };
+                try command.writeCommand(posix.write, socket, resp);
+            }
+        },
+    }
 }

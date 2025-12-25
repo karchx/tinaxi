@@ -5,16 +5,17 @@
 // This module provides a command layer for handling GET, SET, and DEL commands over a simple protocol.
 
 const std = @import("std");
+const poxis = std.posix;
 
 pub const CommandTag = enum { Put, Get, Del };
-pub const Command = struct {
+pub const Command = union(CommandTag) {
     Put: struct { key: []const u8, value: []const u8 },
     Get: struct { key: []const u8 },
     Del: struct { key: []const u8 },
 };
 
 pub const RespTag = enum { Ok, Value, NotFound, Err };
-pub const Response = struct {
+pub const Response = union(RespTag) {
     Ok: void,
     Value: []const u8,
     NotFound: void,
@@ -44,11 +45,32 @@ pub fn parseCommand(input: []const u8) !Command {
     }
 }
 
-pub fn writeCommand(w: anytype, resp: Response) !void {
+pub fn writeCommand(w: anytype, socket: poxis.socket_t, resp: Response) !void {
     switch (resp) {
-        .Ok => try w.print("OK\n"),
-        .Value => |value| try w.print("VALUE " ++ value ++ "\n"),
-        .NotFound => try w.print("NOT_FOUND\n"),
-        .Err => |err_msg| try w.print("ERR " ++ err_msg ++ "\n"),
+        .Ok => {
+            const msg = "OK\n";
+            try handlerWrite(msg, socket, w);
+        },
+        .Value => |value| {
+            try handlerWrite(value, socket, w);
+        },
+        .NotFound => {
+            const msg = "NOT_FOUND\n";
+            try handlerWrite(msg, socket, w);
+        },
+        .Err => |err_msg| {
+            try handlerWrite(err_msg, socket, w);
+        }
+    }
+}
+
+fn handlerWrite(msg: []const u8, socket: poxis.socket_t, w: anytype) !void {
+    var pos: usize = 0;
+    while (pos < msg.len) {
+        const written = try w(socket, msg[pos..]);
+        if (written == 0) {
+            return error.Closed;
+        }
+        pos += written;
     }
 }
