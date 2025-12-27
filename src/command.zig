@@ -7,9 +7,9 @@
 const std = @import("std");
 const poxis = std.posix;
 
-pub const CommandTag = enum { Put, Get, Del };
+pub const CommandTag = enum { Set, Get, Del };
 pub const Command = union(CommandTag) {
-    Put: struct { key: []const u8, value: []const u8 },
+    Set: struct { key: []const u8, value: []const u8 },
     Get: struct { key: []const u8 },
     Del: struct { key: []const u8 },
 };
@@ -27,11 +27,11 @@ pub fn parseCommand(input: []const u8) !Command {
     const op = it.next() orelse return error.Empty;
 
     switch (std.ascii.toUpper(op[0])) {
-        'P' => {
+        'S' => {
             const key = it.next() orelse return error.InvalidCommand;
             const rest = it.rest();
             if (rest.len == 0) return error.InvalidCommand;
-            return Command{ .Put = .{ .key = key, .value = rest } };
+            return Command{ .Set = .{ .key = key, .value = rest } };
         },
         'G' => {
             const key = it.next() orelse return error.InvalidCommand;
@@ -39,9 +39,11 @@ pub fn parseCommand(input: []const u8) !Command {
         },
         'D' => {
             const key = it.next() orelse return error.InvalidCommand;
-            return Command{ .Get = .{ .key = key } };
+            return Command{ .Del = .{ .key = key } };
         },
-        else => return error.InvalidCommand,
+        else => {
+            return error.InvalidCommand;
+        }
     }
 }
 

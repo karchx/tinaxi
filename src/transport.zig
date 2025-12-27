@@ -37,22 +37,24 @@ pub fn initServer(allocator: Allocator) !void {
             std.debug.print("Accept failed: {any}\n", .{err});
             continue;
         };
-
         defer posix.close(socket);
         std.debug.print("connected {f}\n", .{client_address});
 
-        const read = posix.read(socket, &buf) catch |err| {
-            std.debug.print("Read failed: {any}\n", .{err});
-            continue;
-        };
-
-        if (read == 0) {
-            continue;
+        while (true) {
+            const read = posix.read(socket, &buf) catch |err| {
+                std.debug.print("Read failed: {any}\n", .{err});
+                break;
+            };
+            std.debug.print("Received {d} bytes\n", .{read});
+            if (read == 0) {
+                std.debug.print("Connection closed by peer\n", .{});
+                break;
+            }
+            const line = buf[0..read];
+            write(socket, line, &store) catch |err| {
+                std.debug.print("Write failed: {any}\n", .{err});
+            };
         }
-        const line = buf[0..read];
-        write(socket, line, &store) catch |err| {
-            std.debug.print("Write failed: {any}\n", .{err});
-        };
     }
 }
 
@@ -60,8 +62,8 @@ pub fn initServer(allocator: Allocator) !void {
 fn write(socket: posix.socket_t, msg: []const u8, store: *kv.Kv) !void {
     const cmd = try command.parseCommand(msg);
     switch (cmd) {
-        .Put => |put_cmd| {
-            try store.put(put_cmd.key, put_cmd.value);
+        .Set => |set_cmd| {
+            try store.set(set_cmd.key, set_cmd.value);
             const resp = command.Response{ .Ok = {} };
             try command.writeCommand(posix.write, socket, resp);
         },

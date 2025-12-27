@@ -18,7 +18,7 @@ pub const Kv = struct {
         self.store.deinit();
     }
 
-    pub fn put(self: *Kv, key: []const u8, value: []const u8) !void {
+    pub fn set(self: *Kv, key: []const u8, value: []const u8) !void {
         if(self.store.fetchOrderedRemove(key)) |entry| {
             self.allocator.free(entry.key);
             self.allocator.free(entry.value);
@@ -51,12 +51,12 @@ test "create a new kv store" {
     try std.testing.expect(kv.store.count() == 0);
 }
 
-test "puts and get value" {
+test "set and get value" {
     const allocator = std.testing.allocator;
     var kv = Kv.init(allocator);
     defer kv.deinit();
 
-    try kv.put("key1", "value1");
+    try kv.set("key1", "value1");
     try std.testing.expect(kv.store.count() == 1);
 
     const value = kv.get("key1");
