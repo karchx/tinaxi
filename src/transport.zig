@@ -27,6 +27,9 @@ pub fn initServer(allocator: Allocator) !void {
     var store = kv.Kv.init(allocator);
     defer store.deinit();
 
+    var message_buffer: std.ArrayList(u8) = .empty;
+    defer message_buffer.deinit(allocator);
+
     var buf: [128]u8 = undefined;
 
     while (true) {
@@ -41,19 +44,25 @@ pub fn initServer(allocator: Allocator) !void {
         std.debug.print("connected {f}\n", .{client_address});
 
         while (true) {
-            const read = posix.read(socket, &buf) catch |err| {
-                std.debug.print("Read failed: {any}\n", .{err});
-                break;
-            };
+            const read = try posix.read(socket, &buf);
             std.debug.print("Received {d} bytes\n", .{read});
+
             if (read == 0) {
                 std.debug.print("Connection closed by peer\n", .{});
                 break;
             }
-            const line = buf[0..read];
-            write(socket, line, &store) catch |err| {
-                std.debug.print("Write failed: {any}\n", .{err});
-            };
+
+            try message_buffer.appendSlice(allocator, buf[0..read]);
+
+            // check for complete lines
+            // using '\n' as line delimiter
+            // TODO: add Length-prefixed messages support
+            if (std.mem.indexOfScalar(u8, message_buffer.items, '\n')) |_| {
+                write(socket, message_buffer.items, &store) catch |err| {
+                    std.debug.print("Write failed: {any}\n", .{err});
+                };
+                message_buffer.clearRetainingCapacity();
+            }
         }
     }
 }
@@ -63,6 +72,7 @@ fn write(socket: posix.socket_t, msg: []const u8, store: *kv.Kv) !void {
     const cmd = try command.parseCommand(msg);
     switch (cmd) {
         .Set => |set_cmd| {
+            std.debug.print("SET {s} {s}\n", .{set_cmd.key, set_cmd.value});
             try store.set(set_cmd.key, set_cmd.value);
             const resp = command.Response{ .Ok = {} };
             try command.writeCommand(posix.write, socket, resp);
