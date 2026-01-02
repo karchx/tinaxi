@@ -1,17 +1,23 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Mutex = std.Thread.Mutex;
 
 pub const Kv = struct {
     allocator: Allocator,
     store: std.StringArrayHashMap([]const u8),
+    mutex: Mutex,
 
     pub fn init(allocator: Allocator) Kv {
-        return .{ .allocator = allocator, .store = std.StringArrayHashMap([]const u8).init(allocator) };
+        return .{
+            .allocator = allocator,
+            .store = std.StringArrayHashMap([]const u8).init(allocator),
+            .mutex = .{},
+        };
     }
 
     pub fn deinit(self: *Kv) void {
         var iterator = self.store.iterator();
-        while (iterator.next()) | entry | {
+        while (iterator.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.*);
         }
@@ -19,7 +25,10 @@ pub const Kv = struct {
     }
 
     pub fn set(self: *Kv, key: []const u8, value: []const u8) !void {
-        if(self.store.fetchOrderedRemove(key)) |entry| {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.store.fetchOrderedRemove(key)) |entry| {
             self.allocator.free(entry.key);
             self.allocator.free(entry.value);
         }
@@ -28,22 +37,26 @@ pub const Kv = struct {
             try self.allocator.dupe(u8, key),
             try self.allocator.dupe(u8, value),
         );
-
     }
 
     pub fn get(self: *Kv, key: []const u8) ?[]const u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         return self.store.get(key);
     }
 
     pub fn del(self: *Kv, key: []const u8) bool {
-        if(self.store.fetchOrderedRemove(key)) |entry| {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.store.fetchOrderedRemove(key)) |entry| {
             self.allocator.free(entry.value);
             return true;
         }
         return false;
     }
 };
-
 
 test "create a new kv store" {
     const allocator = std.testing.allocator;
