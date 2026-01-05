@@ -21,3 +21,12 @@
 ## Problems
 TCP no is commands, bytes limit for kernel
 
+
+## Bitcask
+- Log-structured storage engine
+```
++-------------------------------------------------------+
+| CRC | Timestamp | Key Size | Value Size | Key | Value |
++-------------------------------------------------------+
+```
+
