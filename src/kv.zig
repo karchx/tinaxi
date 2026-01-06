@@ -2,6 +2,24 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mutex = std.Thread.Mutex;
 
+pub const HINTS_FILE = "filedb.hints";
+
+pub const Metadata = struct {
+    file_id: u32,
+    value_sz: usize,
+    value_offset: usize,
+    timestamp: i64,
+
+    pub fn init(file_id: u32, value_sz: usize, value_offset: usize, timestamp: i64) Metadata {
+        return .{
+            .file_id = file_id,
+            .value_sz = value_sz,
+            .value_offset = value_offset,
+            .timestamp = timestamp,
+        };
+    }
+};
+
 pub const Kv = struct {
     allocator: Allocator,
     store: std.StringArrayHashMap([]const u8),

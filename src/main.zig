@@ -1,5 +1,6 @@
 const std = @import("std");
-const transport = @import("transport.zig");
+const Transport = @import("transport.zig");
+const Store = @import("store.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -10,9 +11,12 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len > 1 and std.mem.eql(u8, args[1], "connect")) {
+        var storedb = Store.Store.init(allocator);
+        defer storedb.deinit();
+
         try repl();
     } else {
-        try transport.initServer(allocator);
+        try Transport.initServer(allocator);
     }
 
 }
