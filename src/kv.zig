@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("utils.zig");
 const Allocator = std.mem.Allocator;
 const Mutex = std.Thread.Mutex;
 
@@ -21,75 +22,65 @@ pub const Metadata = struct {
 };
 
 pub const Kv = struct {
+    crc: u32,
+    timestamp: i64,
+    key_len: usize,
+    value_len: usize,
+    key: []const u8,
+    value: []const u8,
     allocator: Allocator,
-    store: std.StringArrayHashMap([]const u8),
-    mutex: Mutex,
 
-    pub fn init(allocator: Allocator) Kv {
-        return .{
+    pub fn init(allocator: Allocator, key: []const u8, value: []const u8) !*Kv {
+        const kv = try allocator.create(Kv);
+        const key_copy = try allocator.dupe(u8, key);
+        const value_copy = try allocator.dupe(u8, value);
+
+        kv.* = .{
+            .crc = utils.crc32Checksum(key),
+            .timestamp = std.time.timestamp(),
+            .key_len = key.len,
+            .value_len = value.len,
+            .key = key_copy,
+            .value = value_copy,
             .allocator = allocator,
-            .store = std.StringArrayHashMap([]const u8).init(allocator),
-            .mutex = .{},
         };
+
+        return kv;
     }
 
     pub fn deinit(self: *Kv) void {
-        var iterator = self.store.iterator();
-        while (iterator.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.store.deinit();
+        self.allocator.free(self.key);
+        self.allocator.free(self.value);
+        self.allocator.destroy(self);
     }
 
-    pub fn set(self: *Kv, key: []const u8, value: []const u8) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn encode(self: *Kv, buf: []u8) !void {
+        var fbs = std.io.fixedBufferStream(buf);
+        const writer = fbs.writer();
 
-        if (self.store.fetchOrderedRemove(key)) |entry| {
-            self.allocator.free(entry.key);
-            self.allocator.free(entry.value);
-        }
+        try writer.writeInt(u32, self.crc, std.builtin.Endian.little);
+        try writer.writeInt(i64, self.timestamp, std.builtin.Endian.little);
+        try writer.writeInt(usize, self.key_len, std.builtin.Endian.little);
+        try writer.writeInt(usize, self.value_len, std.builtin.Endian.little);
 
-        try self.store.put(
-            try self.allocator.dupe(u8, key),
-            try self.allocator.dupe(u8, value),
-        );
-    }
-
-    pub fn get(self: *Kv, key: []const u8) ?[]const u8 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        return self.store.get(key);
-    }
-
-    pub fn del(self: *Kv, key: []const u8) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        if (self.store.fetchOrderedRemove(key)) |entry| {
-            self.allocator.free(entry.value);
-            return true;
-        }
-        return false;
+        try writer.writeAll(self.key);
+        try writer.writeAll(self.value);
     }
 };
 
-test "create a new kv store" {
-    const allocator = std.testing.allocator;
-    var kv = Kv.init(allocator);
-    try std.testing.expect(kv.store.count() == 0);
-}
+pub fn decodeRecord(allocator: Allocator, buf: []u8) !*Kv {
+    var fbs = std.io.fixedBufferStream(buf);
+    const reader = fbs.reader();
 
-test "set and get value" {
-    const allocator = std.testing.allocator;
-    var kv = Kv.init(allocator);
-    defer kv.deinit();
-
-    try kv.set("key1", "value1");
-    try std.testing.expect(kv.store.count() == 1);
-
-    const value = kv.get("key1");
-    try std.testing.expect(std.mem.eql(u8, value orelse unreachable, "value1"));
+    _ = try reader.readInt(u32, std.builtin.Endian.little);
+    _ = try reader.readInt(i64, std.builtin.Endian.little);
+    const key_len = try reader.readInt(usize, std.builtin.Endian.little);
+    const value_len = try reader.readInt(usize, std.builtin.Endian.little);
+    const key = try allocator.alloc(u8, key_len);
+    defer allocator.free(key);
+    _ = try reader.read(key);
+    const value = try allocator.alloc(u8, value_len);
+    defer allocator.free(value);
+    _ = try reader.read(value);
+    return Kv.init(allocator, key, value);
 }

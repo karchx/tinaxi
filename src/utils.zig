@@ -1,4 +1,5 @@
 const std = @import("std");
+const Crc32 = std.hash.Crc32;
 
 pub fn openUserDir(user_path: []const u8) !std.fs.Dir {
     if (std.fs.path.isAbsolute(user_path)) {
@@ -19,4 +20,10 @@ pub fn openUserDir(user_path: []const u8) !std.fs.Dir {
             else => return err,
         };
     }
+}
+
+pub fn crc32Checksum(data: []const u8) u32 {
+    var crc = Crc32.init();
+    crc.update(data);
+    return crc.final();
 }

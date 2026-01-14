@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const net = std.net;
 const posix = std.posix;
 
-pub fn initServer(allocator: Allocator) !void {
+pub fn initServer(_: Allocator) !void {
     std.debug.print("Starting TCP server...\n", .{});
     const address = try std.net.Address.parseIp4("127.0.0.1", 9999);
 
@@ -25,23 +25,23 @@ pub fn initServer(allocator: Allocator) !void {
     try posix.bind(listener, &address.any, address.getOsSockLen());
     try posix.listen(listener, 128);
 
-    var store = kv.Kv.init(allocator);
-    defer store.deinit();
+    // var store = kv.Kv.init(allocator);
+    // defer store.deinit();
 
     while (true) {
-        var client_address: net.Address = undefined;
-        var client_address_len: posix.socklen_t = @sizeOf(net.Address);
+        const client_address: net.Address = undefined;
+        //const client_address_len: posix.socklen_t = @sizeOf(net.Address);
 
-        const socket = posix.accept(listener, &client_address.any, &client_address_len, 0) catch |err| {
-            std.debug.print("Accept failed: {any}\n", .{err});
-            continue;
-        };
+        // const socket = posix.accept(listener, &client_address.any, &client_address_len, 0) catch |err| {
+        //     std.debug.print("Accept failed: {any}\n", .{err});
+        //     continue;
+        // };
 
         std.debug.print("connected {f}\n", .{client_address});
 
-        const thread = try std.Thread.spawn(.{}, handlerClient, .{ socket, &store, allocator });
+        // const thread = try std.Thread.spawn(.{}, handlerClient, .{ socket, &store, allocator });
 
-        thread.detach();
+        // thread.detach();
     }
 }
 
