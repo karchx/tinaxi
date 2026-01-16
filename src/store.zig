@@ -11,7 +11,9 @@ const DataFile = struct {
     reader: std.fs.File,
     mutex: std.Thread.Mutex,
     currentWriterOffset: u64,
-    alloctor: std.mem.Allocator,
+    allocator: std.mem.Allocator,
+    allocatorOldFile: std.mem.Allocator,
+    filemapOldFiles: std.AutoHashMap(u32, *DataFile),
 
     pub fn init(allocator: std.mem.Allocator, index: u32, dir: std.fs.Dir) !*DataFile {
         var file_buf: [32]u8 = undefined;
@@ -32,15 +34,63 @@ const DataFile = struct {
             .reader = file,
             .mutex = std.Thread.Mutex{},
             .currentWriterOffset = stat.size,
-            .alloctor = allocator,
+            .allocator = allocator,
+
+            .allocatorOldFile = undefined,
+            .filemapOldFiles = undefined,
         };
         return df;
+    }
+
+    pub fn initOldFile(allocator: std.mem.Allocator, filemapOldFiles: std.AutoHashMap(u32, *DataFile)) !*DataFile {
+        const oldfiles = try allocator.create(DataFile);
+        oldfiles.* = .{
+            .id = undefined,
+            .writer = undefined,
+            .reader = undefined,
+            .mutex = undefined,
+            .currentWriterOffset = undefined,
+            .allocator = undefined,
+
+            // old files map
+            .filemapOldFiles = filemapOldFiles,
+            .allocatorOldFile = allocator,
+        };
+        return oldfiles;
+    }
+
+    pub fn initializeOlFilesMap(self: *DataFile, dir: std.fs.Dir) !void {
+        var filelist: std.ArrayList([]const u8) = .empty;
+        defer filelist.deinit(self.allocatorOldFile);
+
+        try utils.listAllDatabaseFiles(self.allocatorOldFile, dir, &filelist);
+
+        for (filelist.items) |entry| {
+            const file_id = try utils.parseIdFromFilename(entry);
+            const df = try DataFile.init(self.allocatorOldFile, file_id, dir);
+            try self.filemapOldFiles.put(file_id, df);
+        }
+
+        for (filelist.items) |entry| {
+            self.allocatorOldFile.free(entry);
+        }
     }
 
     pub fn deinit(self: *DataFile) void {
         self.writer.close();
         self.reader.close();
-        self.alloctor.destroy(self);
+        self.filemapOldFiles.deinit();
+        self.allocator.destroy(self);
+        self.allocatorOldFile.destroy(self);
+    }
+
+    pub fn getOldFile(self: *DataFile, buf: []u8, file_id: u32, value_pos: usize, value_size: usize) !void {
+        const df = self.filemapOldFiles.get(file_id);
+        if (df == null) {
+            return error.EmptyDataFile;
+        }
+
+        return df.?.get(buf, value_pos, value_size);
     }
 
     pub fn put(self: *DataFile, buf: []const u8) !u64 {
@@ -68,6 +118,7 @@ const DataFile = struct {
 pub const Store = struct {
     allocator: std.mem.Allocator,
     datafile: *DataFile,
+    oldfiles: *DataFile,
     keydir: std.StringHashMap(kv.Metadata),
     mutex: std.Thread.Mutex,
     config: config.Options,
@@ -76,23 +127,35 @@ pub const Store = struct {
         // init config
         const conf = config.defaultOptions();
 
+        // olfiles db
+        const oldfilesMap = std.AutoHashMap(u32, *DataFile).init(allocator);
         // init datafile
         var dir = try utils.openUserDir(conf.dir);
         defer dir.close();
+        const oldfiles = try DataFile.initOldFile(allocator, oldfilesMap);
+        try oldfiles.initializeOlFilesMap(dir);
 
         const keydir = std.StringHashMap(kv.Metadata).init(allocator);
         const store = try allocator.create(Store);
 
         store.* = .{
-            .datafile = undefined,
+            .mutex = std.Thread.Mutex{},
             .allocator = allocator,
             .config = conf,
-            .mutex = std.Thread.Mutex{},
+            .oldfiles = oldfiles,
+            .datafile = undefined,
             .keydir = keydir,
         };
 
         std.log.info("=========== Initializing Store ===========", .{});
-        const id: u32 = 1; // TODO: get last datafile id
+        var id: u32 = 1;
+        var it = store.oldfiles.filemapOldFiles.keyIterator();
+        while (it.next()) |entry| {
+            if (entry.* >= id) {
+                id = entry.* + 1;
+            }
+        }
+        std.log.info("last used file id: {d}", .{id});
         store.datafile = try DataFile.init(allocator, id, dir);
 
         try store.loadKeyDir();
@@ -112,6 +175,7 @@ pub const Store = struct {
         self.storeHashMap() catch |err| {
             std.log.err("Failed to store hash map: {}", .{err});
         };
+        self.oldfiles.deinit();
     }
 
     pub fn put(self: *Store, key: []const u8, value: []const u8) !void {
@@ -143,7 +207,7 @@ pub const Store = struct {
         defer self.mutex.unlock();
 
         const metadata = self.keydir.get(key);
-        std.log.info("Getting key: {s} metadata: {any}", .{key, metadata});
+        std.log.info("Getting key: {s} metadata: {any}", .{ key, metadata });
         if (metadata == null) {
             return undefined;
         }
@@ -153,7 +217,7 @@ pub const Store = struct {
         if (self.datafile.id == metadata.?.file_id) {
             try self.datafile.get(buf, metadata.?.value_offset, metadata.?.value_sz);
         } else {
-            // oldfiles ?
+            try self.oldfiles.getOldFile(buf, metadata.?.file_id, metadata.?.value_offset, metadata.?.value_sz);
         }
         const rec = try kv.decodeRecord(self.allocator, buf);
         defer rec.deinit();
@@ -187,7 +251,7 @@ pub const Store = struct {
         }
     }
 
-   fn loadKeyDir(self: *Store) !void {
+    fn loadKeyDir(self: *Store) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -222,7 +286,7 @@ pub const Store = struct {
             const timestamp = std.mem.readInt(i64, buf[0..8], .little);
 
             const metadata = kv.Metadata.init(file_id, value_sz, value_offset, timestamp);
-            std.log.info("Loaded key: {s} metadata: {any}", .{key_buf, metadata});
+            std.log.info("Loaded key: {s} metadata: {any}", .{ key_buf, metadata });
             try self.keydir.put(key_buf, metadata);
         }
         return;
